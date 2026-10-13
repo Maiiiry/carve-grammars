@@ -112,6 +112,10 @@
     // rules, and they cannot drift apart again.
     const GLUED_ATTR_BLOCK =
         '(?=\\{\\s*(?:' + ATTR_ITEM + '(?:\\s+' + ATTR_ITEM + ')*\\s*)?\\}[ \\t]+[^ \\t\\n])';
+    // A list marker glued to an attribute block, the block consumed.
+    const GLUED_MARKER =
+        '(?:[-*] +)*(?:[-*]|(?:[0-9]+|[A-Za-z]|[ivxlcdm]+|[IVXLCDM]+)[.)]|\\.)'
+        + '\\{\\s*(?:' + ATTR_ITEM + '(?:\\s+' + ATTR_ITEM + ')*\\s*)?\\} +';
     // BALANCED BRACKET TEXT - the body of a link label, an image alt text and a
     // bracketed span. See the long note on Prism's `bracketText`, which this
     // mirrors; the short version is that the spec closes a label at the
@@ -847,6 +851,12 @@
         className: 'symbol',
         begin: /^(?<![^\r\n])(?:(?<![\s\S])\uFEFF)?[ \t]*\[\^[^\]]+\]:(?= )/,
         end: /$(?![^\r\n])/,
+        // A `+` as the whole first line is the continuation marker when a
+        // non-blank flush-left line follows (markup-carve/carve#3105).
+        contains: [{
+            className: 'punctuation',
+            begin: /(?=\+)(?<=^(?<![^\r\n])(?:(?<![\s\S])\uFEFF)?\[\^[^\]\r\n]+\]: +)\+[ \t]*(?=\r?\n[^ \t\r\n])/,
+        }],
         relevance: 10,
     };
 
@@ -1002,6 +1012,19 @@
         { className: 'bullet', begin: RegExp('(?=[-*])' + QUOTED + '[-*] \\[[ xX\\-_>?]\\](?= )' + NO_EMPTY) },
         { className: 'bullet', begin: RegExp('(?=[-*])' + QUOTED + '(?:[-*] +)*[-*](?:(?= )|' + GLUED_ATTR_BLOCK + ')' + NO_EMPTY) },
         { className: 'bullet', begin: RegExp('(?=[\\dA-Za-z.])' + QUOTED + '(?:\\d+[.)]|[a-zA-Z][.)]|[ivxlcdm]+[.)]|[IVXLCDM]+[.)]|\\.)(?:(?= )|' + GLUED_ATTR_BLOCK + ')' + NO_EMPTY) },
+        // The `+` continuation marker: after a quoted list marker always, and
+        // as a column-0 quote's own first line when a non-blank flush-left
+        // line follows (markup-carve/carve#3105).
+        {
+            className: 'punctuation',
+            begin: RegExp('(?=\\+)' + QUOTED.slice(0, -1)
+                + '(?:[-*] \\[[ xX\\-_>?]\\] +|(?:[-*] +)+|(?:\\d+[.)]|[a-zA-Z][.)]|[ivxlcdm]+[.)]|[IVXLCDM]+[.)]|\\.) +|'
+                + GLUED_MARKER + '))\\+[ \\t]*$(?![^\\r\\n])'),
+        },
+        {
+            className: 'punctuation',
+            begin: /(?=\+)(?<=^(?<![^\r\n])(?:(?<![\s\S])\uFEFF)?>(?: >)* )\+[ \t]*(?=\r?\n[^ \t\r\n>])/,
+        },
     );
 
     // Horizontal rules: --- or *** or ___
@@ -1053,12 +1076,22 @@
         relevance: 5,
     };
 
+    // A `+` as the whole rest of a list item's marker line is the continuation
+    // marker, like a lone `+` line.
+    const MARKER_LINE_CONTINUATION = {
+        className: 'punctuation',
+        begin: RegExp('(?=\\+)(?<=' + LIST_MARKER_BEFORE_BLOCK + '|^(?<![^\\r\\n])(?:(?<![\\s\\S])\\uFEFF)?[ \\t]*'
+            + GLUED_MARKER + ')\\+[ \\t]*$(?![^\\r\\n])'),
+        relevance: 0,
+    };
+
     // Definition-list description marker: `:  def`. Reused as a nested mode
     // inside DEFINITION_LIST_ENTRY - not registered as a top-level mode.
     const DEFINITION_TERM = {
         className: 'title',
         begin: /^(?<![^\r\n])[ \t]*: (?![ \t]*$(?![^\r\n]))/,
         end: /$(?![^\r\n])/,
+        contains: [{ className: 'punctuation', begin: /(?=\+)(?<=^(?<![^\r\n])[ \t]*: +)\+[ \t]*$(?![^\r\n])/ }],
         relevance: 5,
     };
 
@@ -2126,6 +2159,7 @@
         TASK_LIST,         // Must be before LIST_BULLET
         LIST_BULLET,
         LIST_NUMBER,
+        MARKER_LINE_CONTINUATION,
         DEFINITION_LIST_ENTRY,  // `:: term` / `:  definition` (carve-grammars#91)
         FOOTNOTE_DEF,      // Must be before REFERENCE_DEF
         ABBREVIATION_DEF,  // Must be before REFERENCE_DEF (*[ABBR]: vs [ref]:)
