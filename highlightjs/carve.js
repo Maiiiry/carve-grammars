@@ -140,6 +140,15 @@
         + kinds.map((kind) => kind + '(?:[^' + kind + '\\n]|' + kind + '(?!\\})){1,4096}' + kind).join('|')
         + ')\\}';
     const OPAQUE_BRACED_SOURCE = bracedSource(BRACED_KINDS);
+    // A braced emphasis span nests its own kind (carve#2904), and `{**}` is
+    // literal text that never closes the run around it. The body never reads
+    // `{` before its own delimiter as text, so the scan stays unambiguous.
+    const sameKindBraced = (kind, depth) => '\\{' + kind + '(?!' + kind + '\\})(?:'
+        + '\\\\[^\\n]|[^' + kind + '\\n{\\\\]|' + kind + '(?!\\})|\\n(?![ \\t\\r]*\\n)'
+        + '|\\{' + kind + kind + '\\}|\\{(?!' + kind + ')'
+        + (depth > 0 ? '|' + sameKindBraced(kind, depth - 1) : '')
+        + '){1,4096}' + kind + '\\}';
+    const sameKindAtoms = (kind) => '\\{' + kind + kind + '\\}|' + sameKindBraced(kind, 3);
     // Link destinations and autolinks are opaque too (PART 9 section 9 E2a), so
     // `/see [x](http://a.b/c/) now/` does not close at the `/` before `)`.
     // Each part accepts only what its production does: a complete label before
@@ -190,7 +199,7 @@
     // its first closer.
     const DESTINATION_SOURCE = OPAQUE_INLINE_SOURCE.replace(OPAQUE_BRACED_SOURCE + '|', '');
     const braced = (d, opener, atoms = true) => {
-        const atom = '(?:' + (atoms ? bracedSource(BRACED_KINDS.filter((kind) => kind !== d)) + '|' : '')
+        const atom = '(?:' + (atoms ? sameKindAtoms(d) + '|' + bracedSource(BRACED_KINDS.filter((kind) => kind !== d)) + '|' : '')
             + `${BARE_CODE}|${DESTINATION_SOURCE})`;
         // The cheap scan, tempered on the delimiter, fails fast where no closer
         // exists at all.
@@ -203,7 +212,7 @@
         };
     };
     const bare = (d, opener) => {
-        const opaque = OPAQUE_INLINE_SOURCE.replace(OPAQUE_BRACED_SOURCE, bracedSource(BRACED_KINDS.filter((kind) => kind !== d)));
+        const opaque = OPAQUE_INLINE_SOURCE.replace(OPAQUE_BRACED_SOURCE, sameKindAtoms(d) + '|' + bracedSource(BRACED_KINDS.filter((kind) => kind !== d)));
         const atom = `(?:\\\\(?:[^\\n]|\\n(?![ \\t]*\\n))|${BARE_CODE}|${opaque}|(?<=\\s)${d}|${d}(?=${LETTER_OR_DIGIT})`
             + `|(?!${opaque})[^${d}\\\\\\n\`]|\\n(?![ \\t]*\\n))`;
         return {
@@ -331,6 +340,11 @@
         begin: /(?<=\])\{\s*\}/,
         relevance: 5,
     };
+    // A delimited comment joins no attribute run (carve#2932), so a glued block
+    // fails when its run starts right after a comment's `%}`; the opener is
+    // required because `{k=a%}` ends an attribute block the same way. Checked
+    // only after a block matched; bounded, so a run past 64 blocks scopes its tail.
+    const noCommentRun = '(?<!\\{%(?:[^%\\n]|%(?!\\})|\\n(?![ \\t\\r]*\\n)){0,4096}%\\}(?:[ \\t]{0,64}\\{[^{}\\n]{0,512}\\}){1,64})';
     const ATTRIBUTE = {
         className: 'attr',
         // TWO ROLES, ONE TOKEN - see the note on Prism's `attributes`. A standalone
@@ -340,7 +354,7 @@
         // the match still starts at the `{`.
         begin: new RegExp(
             '(?=\\{)(?<=(?:^(?<![^\\r\\n])|\\n)[ \\t]*)\\{(?!__\\})\\s*' + ATTR_ITEM + '(?:\\s+' + ATTR_ITEM + ')*\\s*\\}' + '(?=(?:[ \\t]*\\{(?:"(?:\\\\.|[^"\\\\\\n])*"|\'(?:\\\\.|[^\'\\\\\\n])*\'|[^{}"\'\\n])*\\})*[ \\t]*(?:\\n|$(?![^\\r\\n])))'
-            + '|(?=\\{)(?<=[*/_~=`>}:)\\]$<|])' + '\\{(?!__\\})[ \\t]*' + ATTR_ITEM + '(?:[ \\t]+' + ATTR_ITEM + ')*[ \\t]*\\}'
+            + '|(?=\\{)(?<=[*/_~=`>}:)\\]$<|])' + '\\{(?!__\\})[ \\t]*' + ATTR_ITEM + '(?:[ \\t]+' + ATTR_ITEM + ')*[ \\t]*\\}' + noCommentRun
             + '|(?=\\{)(?<=(?:^(?<![^\\r\\n])|\\n)[ \\t]*(?:[-+*]|\\d{1,9}[.)]|[A-Za-z]{1,8}[.)]|\\.))' + '\\{(?!__\\})[ \\t]*' + ATTR_ITEM + '(?:[ \\t]+' + ATTR_ITEM + ')*[ \\t]*\\}'
             + '|(?=\\{)(?<=(?:^(?<![^\\r\\n])|\\n)[ \\t]*(?:[-+*]|\\d{1,9}[.)]|[A-Za-z]{1,8}[.)]|\\.)(?:\\{[^{}\\n]*\\})?(?:[ \\t]+\\[[ xX]\\])?[ \\t]+)' + '\\{(?!__\\})[ \\t]*' + ATTR_ITEM + '(?:[ \\t]+' + ATTR_ITEM + ')*[ \\t]*\\}' + '(?=[ \\t]*(?:\\n|$(?![^\\r\\n])))',
         ),
@@ -1738,7 +1752,11 @@
     // Captions: ^ caption text
     const CAPTION = {
         className: 'title',
-        begin: /^(?<![^\r\n])(?:(?<![\s\S])\uFEFF)?[ \t]*\^ (?![ \t]*$(?![^\r\n]))/,
+        // A quote of bare `>` lines is no caption host (CARVE-P9-080); the
+        // lookbehind is Prism's, see there. Not an `on:begin` veto: an ignored
+        // top-level begin rescans with the later rules only, which can run to
+        // the end of the document each time.
+        begin: /^(?<![^\r\n])(?:(?<![\s\S])\uFEFF)?(?=[ \t]*\^ )(?<!(?:(?<![\s\S])\uFEFF?|(?:\r\n|\r(?!\n)|\n)[ \t]*(?:\r\n|\r(?!\n)|\n))(?:>[ \t]*(?:\r\n|\r(?!\n)|\n))+(?:[ \t]*(?:\r\n|\r(?!\n)|\n))*)[ \t]*\^ (?![ \t]*$(?![^\r\n]))/,
         end: /$(?![^\r\n])/,
         relevance: 5,
     };
@@ -2011,15 +2029,16 @@
         { begin: new RegExp(`([*/_=])(?!(?:(?!${boundary}).){0,4096}?\\1)`), relevance: 0 },
         HIGHLIGHT, SUBSCRIPT, SUPERSCRIPT, BOLD_ITALIC, STRONG, EMPHASIS, UNDERLINE, TYPOGRAPHY,
     ];
-    // A bare run holds inline content. Inside it, a same-kind forced opener is
-    // text, and so is a bare opener whose closer lies only past this run's.
+    // A bare run holds inline content. Inside it, a same-kind braced span nests
+    // and `{**}` is text, and so is a bare opener whose closer lies only past
+    // this run's.
     // Once a highlight is open its closer beats smart typography (`x =y z<= w`).
     // A link whose label the LINK mode cannot read, or an autolink, is still
     // opaque to a bare closer.
     const OPAQUE_DESTINATION = { begin: new RegExp(OPAQUE_INLINE_SOURCE.replace(OPAQUE_BRACED_SOURCE + '|', '')), relevance: 0 };
     const bareContent = (d, own) => [
         ESCAPE, CRITIC_COMMENT, DELIMITED_COMMENT,
-        { begin: new RegExp(`\\{${d}`), relevance: 0 },
+        { begin: new RegExp(`\\{${d}${d}\\}`), relevance: 0 },
         ...substitutionContent('(?!)', []).slice(3).filter((mode) => mode !== own
             && !(d === '=' && mode === TYPOGRAPHY)
             && mode.begin?.source !== '([*/_=])(?!(?:(?!(?!)).){0,4096}?\\1)'),
@@ -2028,7 +2047,7 @@
     for (const [d, mode] of [['\\*', STRONG], ['/', EMPHASIS], ['_', UNDERLINE], ['~', STRIKETHROUGH], ['=', HIGHLIGHT]]) {
         const others = ['*', '/', '_', '~', '='].filter((c) => `\\${c}` !== d && c !== d).map((c) => (c === '*' ? '\\*' : c)).join('');
         const crossing = {
-            begin: new RegExp(`([${others}])(?=[^\\n]*?${bareCloser('\\1')})(?=(?:(?!${bareCloser('\\1')})[^\\n])*?${bareCloser(d)})`),
+            begin: new RegExp(`([${others}])(?=[^\\n]*?${bareCloser('\\1')})(?=(?:${sameKindAtoms(d)}|(?!${sameKindAtoms(d)})(?!${bareCloser('\\1')})[^\\n])*?${bareCloser(d)})`),
             relevance: 0,
         };
         const content = bareContent(d, mode);
@@ -2037,9 +2056,10 @@
         mode.contains = [{ begin: new RegExp(`\\s${d}`), relevance: 0 }, DELIMITED_COMMENT, ...content];
     }
 
-    // A braced span holds inline content. Its own delimiter is text inside it,
-    // a code span still open at its closer ends there, and a bare opener whose
-    // closer lies only past the span's closer is text.
+    // A braced span holds inline content. Its own bare delimiter is text inside
+    // it while a braced span of its kind nests, a code span still open at its
+    // closer ends there, and a bare opener whose closer lies only past the
+    // span's closer is text.
     for (const [d, mode, own] of [
         ['\\*', FORCED_STRONG, [STRONG]], ['/', FORCED_EMPHASIS, [EMPHASIS]], ['_', FORCED_UNDERLINE, [UNDERLINE]],
         ['~', FORCED_STRIKE, [STRIKETHROUGH]], ['=', FORCED_HIGHLIGHT, [HIGHLIGHT]], ['\\^', SUPERSCRIPT, []],
@@ -2051,16 +2071,20 @@
         const unscoped = mode === INSERT || mode === DELETE
             ? [{ begin: new RegExp(`\\{([*/_~=^,+-])(?=(?:(?!\\1\\})[^\\n]){0,4096}?${closer})`), relevance: 0 }]
             : [];
+        const nests = !unscoped.length;
+        // A nested span of this kind holds its own closer, so it is skipped.
+        const skip = nests ? `${sameKindAtoms(d)}|(?!${sameKindAtoms(d)})` : '';
         mode.contains = [
             ESCAPE, CRITIC_COMMENT, DELIMITED_COMMENT, ...unscoped,
+            ...(nests ? [{ begin: new RegExp(`\\{${d}${d}\\}`), relevance: 0 }] : []),
             { begin: new RegExp(`${d}(?!\\})`), relevance: 0 },
             { className: 'code', begin: /(?:\$\$?|!)?`+(?![^`\n]{0,4096}`)/, end: new RegExp(`(?=${closer})`) },
             CRITIC_SUB,
             {
-                begin: new RegExp(`([${['\\*', '/', '_', '~', '='].filter((c) => c !== d).join('')}])(?=[^\\n]*?${bareCloser('\\1')})(?=(?:(?!${bareCloser('\\1')})[^\\n])*?${closer})`),
+                begin: new RegExp(`([${['\\*', '/', '_', '~', '='].filter((c) => c !== d).join('')}])(?=[^\\n]*?${bareCloser('\\1')})(?=(?:${skip}(?!${bareCloser('\\1')})[^\\n])*?${closer})`),
                 relevance: 0,
             },
-            ...substitutionContent('(?!)', []).slice(3).filter((m) => m !== mode && !own.includes(m)
+            ...substitutionContent('(?!)', []).slice(3).filter((m) => (nests || m !== mode) && !own.includes(m)
                 && m.begin?.source !== '([*/_=])(?!(?:(?!(?!)).){0,4096}?\\1)'),
             OPAQUE_DESTINATION,
         ];

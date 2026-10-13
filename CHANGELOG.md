@@ -4,6 +4,22 @@ All notable changes to `carve-grammars` are documented here.
 
 ## [Unreleased]
 
+### Fixes
+
+- A braced emphasis span nests its own kind in all three grammars, so
+  `*a {*b*} c*` scopes one bold run holding a nested one, and an empty `{**}`
+  inside a run stays text instead of closing it (#673).
+- Leave an attribute block glued after a delimited comment as text, so
+  `*x*{% c %}{.k}` no longer scopes `{.k}` as attributes in any of the three
+  grammars (#674).
+- The Tiptap writer keeps the escapes an edited paragraph needs next to a marked
+  run: a literal `{` before one (`\{*x*}`), a lone delimiter a later mark's
+  delimiter would close (`\~a *x* b~`), and a literal `{,` that would open a
+  subscript (#676).
+- A `^ ` line below a quote made only of bare `>` lines is a paragraph, not a
+  caption, in all three grammars, when the quote opens at the document start or
+  after a blank line (#675).
+
 ### Added
 
 - The `fence-languages.json` export: one table of which grammar a fenced code

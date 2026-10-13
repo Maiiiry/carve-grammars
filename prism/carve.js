@@ -165,6 +165,11 @@
             'string': new RegExp('\\[' + bracketText + '\\]'),
         },
     };
+    // A delimited comment joins no attribute run (carve#2932), so a glued block
+    // fails when its run starts right after a comment's `%}`; the opener is
+    // required because `{k=a%}` ends an attribute block the same way. Checked
+    // only after a block matched; bounded, so a run past 64 blocks scopes its tail.
+    var noCommentRun = '(?<!\\{%(?:[^%\\n]|%(?!\\})|\\n(?![ \\t\\r]*\\n)){0,4096}%\\}(?:[ \\t]{0,64}\\{[^{}\\n]{0,512}\\}){1,64})';
     var attributes = {
         // TWO ROLES, ONE TOKEN. A standalone attribute LINE may span lines; an
         // INLINE block glued to a construct may not - `attributes` pads and
@@ -183,7 +188,7 @@
         pattern: RegExp(
             // A block at a line start must fill its line: `{.c} para` and `- {.c} text` are text.
             '(?<=(?:^(?<![^\\r\\n])|\\n)[ \\t]*)\\{(?!__\\})\\s*' + attrItem + '(?:\\s+' + attrItem + ')*\\s*\\}' + '(?=(?:[ \\t]*\\{(?:"(?:\\\\.|[^"\\\\\\n])*"|\'(?:\\\\.|[^\'\\\\\\n])*\'|[^{}"\'\\n])*\\})*[ \\t]*(?:\\n|$(?![^\\r\\n])))'
-            + '|(?<=[*/_~=`>}:)\\]$<|])' + '\\{(?!__\\})[ \\t]*' + attrItem + '(?:[ \\t]+' + attrItem + ')*[ \\t]*\\}'
+            + '|(?<=[*/_~=`>}:)\\]$<|])' + '\\{(?!__\\})[ \\t]*' + attrItem + '(?:[ \\t]+' + attrItem + ')*[ \\t]*\\}' + noCommentRun
             + '|(?<=(?:^(?<![^\\r\\n])|\\n)[ \\t]*(?:[-+*]|\\d{1,9}[.)]|[A-Za-z]{1,8}[.)]|\\.))' + '\\{(?!__\\})[ \\t]*' + attrItem + '(?:[ \\t]+' + attrItem + ')*[ \\t]*\\}'
             + '|(?<=(?:^(?<![^\\r\\n])|\\n)[ \\t]*(?:[-+*]|\\d{1,9}[.)]|[A-Za-z]{1,8}[.)]|\\.)(?:\\{[^{}\\n]*\\})?(?:[ \\t]+\\[[ xX]\\])?[ \\t]+)' + '\\{(?!__\\})\\s*' + attrItem + '(?:\\s+' + attrItem + ')*\\s*\\}' + '(?=[ \\t]*(?:\\n|$(?![^\\r\\n])))',
         ),
@@ -297,6 +302,18 @@
         }).join('|') + ')\\}';
     }
     var opaqueBracedInline = bracedInline(bracedKinds);
+    // A braced emphasis span nests its own kind (carve#2904), and `{**}` is
+    // literal text that never closes the run around it. The body never reads
+    // `{` before its own delimiter as text, so the scan stays unambiguous.
+    function sameKindBraced(kind, depth) {
+        var body = '\\\\[^\\n]|[^' + kind + '\\n{\\\\]|' + kind + '(?!\\})|\\n(?![ \\t\\r]*\\n)'
+            + '|\\{' + kind + kind + '\\}|\\{(?!' + kind + ')'
+            + (depth > 0 ? '|' + sameKindBraced(kind, depth - 1) : '');
+        return '\\{' + kind + '(?!' + kind + '\\})(?:' + body + '){1,4096}' + kind + '\\}';
+    }
+    function sameKindAtoms(kind) {
+        return '\\{' + kind + kind + '\\}|' + sameKindBraced(kind, 3);
+    }
 
     // Link destinations and autolinks are opaque too (PART 9 section 9 E2a): the
     // `/` in `/see [x](http://a.b/c) now/` does not close the italic. Each part
@@ -367,7 +384,7 @@
     // one outside all three. `kinds` is empty for an insertion or deletion,
     // which closes at its first closer.
     function forcedBody(delimiter, kinds) {
-        var atom = '(?:' + (kinds === undefined ? bracedInline(bracedKinds.filter(function (kind) { return kind !== delimiter; })) + '|' : '')
+        var atom = '(?:' + (kinds === undefined ? sameKindAtoms(delimiter) + '|' + bracedInline(bracedKinds.filter(function (kind) { return kind !== delimiter; })) + '|' : '')
             + bareCode + '|\\[' + opaqueLabel + linkTail
             + '|<[a-zA-Z][a-zA-Z0-9+.\\-]{0,2047}:' + urlChar + '{1,2048}>'
             + '|<' + emailClass('0-9\\-_.+') + '{1,512}@(?:' + emailClass('0-9\\-_') + '{1,512}\\.){1,64}' + emailClass('') + '{1,512}>)';
@@ -380,7 +397,7 @@
 
     function bareRun(delimiter) {
         var braced = bracedInline(bracedKinds.filter(function (kind) { return kind !== delimiter; }));
-        var opaque = '(?:' + braced
+        var opaque = '(?:' + sameKindAtoms(delimiter) + '|' + braced
             + '|\\[' + opaqueLabel + linkTail
             + '|<[a-zA-Z][a-zA-Z0-9+.\\-]{0,2047}:' + urlCharUnicode + '{1,2048}>'
             + '|<' + emailClass('0-9\\-_.+') + '{1,512}@(?:' + emailClass('0-9\\-_') + '{1,512}\\.){1,64}' + emailClass('') + '{1,512}>'
@@ -1453,7 +1470,15 @@
             // strict about this, so the two engines now agree.
             // MARKER REQUIRES CONTENT: `^` followed by whitespace only is prose,
             // the same as every other marker - carve-rs renders `^ ` as `<p>^</p>`.
-            pattern: /^(?<![^\r\n])(?:(?<![\s\S])\uFEFF)?[ \t]*\^ +(?![ \t]*$(?![^\r\n]))[^\r\n]*$(?![^\r\n])/m,
+            // AN EMPTY QUOTE IS NO HOST (CARVE-P9-080): below a run of bare `>`
+            // lines opened at the start or after a blank line, the caret line is
+            // a paragraph. The sentinel lookahead keeps the lookbehind off every
+            // other line start, and each caret line reads back only over its own
+            // run, so the lookbehind needs no bound. Below a prose line the run may close a quote
+            // that line continues lazily, which a pattern cannot see; and the
+            // start alternative is a token boundary too, so it needs the `>`
+            // right there (a quote line can end in a comment token).
+            pattern: /^(?<![^\r\n])(?:(?<![\s\S])\uFEFF)?(?=[ \t]*\^ )(?<!(?:(?<![\s\S])\uFEFF?|(?:\r\n|\r(?!\n)|\n)[ \t]*(?:\r\n|\r(?!\n)|\n))(?:>[ \t]*(?:\r\n|\r(?!\n)|\n))+(?:[ \t]*(?:\r\n|\r(?!\n)|\n))*)[ \t]*\^ +(?![ \t]*$(?![^\r\n]))[^\r\n]*$(?![^\r\n])/m,
             alias: 'title',
             inside: Object.assign({
                 'punctuation': /^(?<![^\r\n])\uFEFF?\^/,
@@ -2159,19 +2184,42 @@
     ].forEach(function (name) { substitutionContent[name] = Prism.languages.carve[name]; });
     // A bare or braced run's content is inline content too. Its own rules are
     // left out, or the run would match itself again, and inside a braced span
-    // its own delimiter is text.
+    // its own bare delimiter is text. A braced span of its own kind nests
+    // (carve#2904); the nested rule cannot start at offset 0, where the run's
+    // own opener is.
+    var nestedRules = {};
+    function nestedBraced(name, delimiter) {
+        nestedRules[name] = nestedRules[name] || {
+            pattern: RegExp('(?<=[\\s\\S])\\{' + delimiter + '(?!' + delimiter + '\\})' + forcedBody(delimiter) + delimiter + '\\}'),
+            greedy: true,
+            alias: inline[name].alias,
+        };
+        return nestedRules[name];
+    }
     [
-        ['bold', ['bold', 'forced-bold']], ['italic', ['italic', 'forced-italic']],
-        ['underline', ['underline', 'forced-underline']], ['strike', ['strike', 'forced-strike']],
-        ['highlight', ['highlight']], ['forced-bold', ['bold', 'forced-bold']],
-        ['forced-italic', ['italic', 'forced-italic']], ['forced-underline', ['underline', 'forced-underline']],
-        ['forced-strike', ['strike', 'forced-strike']], ['superscript', ['superscript']],
+        ['bold', ['bold'], 'forced-bold', '\\*'], ['italic', ['italic'], 'forced-italic', '/'],
+        ['underline', ['underline'], 'forced-underline', '_'], ['strike', ['strike'], 'forced-strike', '~'],
+        ['highlight', ['highlight'], 'highlight', '='], ['forced-bold', ['bold', 'forced-bold'], 'forced-bold', '\\*'],
+        ['forced-italic', ['italic', 'forced-italic'], 'forced-italic', '/'],
+        ['forced-underline', ['underline', 'forced-underline'], 'forced-underline', '_'],
+        ['forced-strike', ['strike', 'forced-strike'], 'forced-strike', '~'], ['superscript', ['superscript'], 'superscript', '\\^'],
         // A deletion's own `-` delimiters would read as a dash.
-        ['subscript', ['subscript']], ['inserted', ['inserted']], ['deleted', ['deleted', 'typography']],
+        ['subscript', ['subscript'], 'subscript', ','], ['inserted', ['inserted']], ['deleted', ['deleted', 'typography']],
     ].forEach(function (pair) {
-        var content = Object.assign({ 'changed': inline['changed'] }, substitutionContent);
-        pair[1].forEach(function (name) { delete content[name]; });
+        var base = Object.assign({ 'changed': inline['changed'] }, substitutionContent);
+        var content = {};
+        Object.keys(base).forEach(function (name) {
+            if (name === pair[2]) {
+                content[name] = nestedBraced(name, pair[3]);
+            } else if (pair[1].indexOf(name) === -1) {
+                content[name] = base[name];
+            }
+        });
         (inline[pair[0]] || Prism.languages.carve[pair[0]]).inside = content;
+    });
+    // A nested span's content is the content of a braced span of its kind.
+    Object.keys(nestedRules).forEach(function (name) {
+        nestedRules[name].inside = inline[name].inside;
     });
     inline['changed'].inside = {
         'deleted': {
