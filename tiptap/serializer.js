@@ -989,25 +989,20 @@ export function serializeToCarve(doc, options = {}) {
         const rowspanCarry = []; // rowspanCarry[col] = remaining rows to fill with `^`
         const carryMarker = [];
         const separatorWidths = table.attrs?.carveSeparatorWidths;
-        const continuationLines = rows.map(row => Math.max(0, Number(row.attrs?.carveContinuationLines) || 0));
+        const continuationLines = rows.map(row => (row.content || []).some(cell => cell.attrs?.carveSpanMarker && (cell.content || []).some(p => (p.content || []).length))
+            ? Math.max(0, Number(row.attrs?.carveContinuationLines) || 0) : 0);
         const grid = []; // per row: { header, content, align, attrs } per grid column
         const owners = []; // { cell, row, col, colspan, rowspan, marker, segments }
 
         const PARAGRAPH_JOIN = {};
-        // A cell's text, split where a `+` continuation row joined it.
+        // A cell's text stays together. A span marker may need a continuation
+        // line to place text in the cell it resolves into.
         const segmentsOf = (cell) => {
             const segments = [{ line: null, nodes: [] }];
             (cell.content || []).forEach((paragraph, index) => {
                 if (index > 0) segments.at(-1).nodes.push(PARAGRAPH_JOIN);
                 for (const inline of paragraph.content || []) {
-                    if (inline.type === 'carveCellWrap') {
-                        segments.push({
-                            line: inline.attrs?.line || 1,
-                            row: inline.attrs?.row ?? null,
-                            col: inline.attrs?.col ?? null,
-                            nodes: [],
-                        });
-                    } else segments.at(-1).nodes.push(inline);
+                    segments.at(-1).nodes.push(inline);
                 }
             });
             return segments;

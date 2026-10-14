@@ -35,9 +35,9 @@ for (const file of listCorpusFiles()) {
     else assert.fail(`${file.name}: merged output matches neither authored nor editor semantics`);
 }
 
-// The corpus at carve 2d473af and the payload writer left 511 source envelopes: 509
-// preserve an authored append and two use canonical output. Sections 539-544
-// added eleven, all of them authored appends; `line-blocks-2` left once a
+// The previous projection left 486 source envelopes: 483 authored appends and
+// three editor-wins conflicts. Mapping joins to spaces adds 29 envelopes, all
+// authored appends. Earlier, sections 539-544 added eleven, all of them authored appends; `line-blocks-2` left once a
 // line block's indentation loaded as ASCII spaces, ten left once the quote
 // fence kept its form and a quote's attribute run loaded, sections 550-552
 // added five, keeping a rule's `*` or `_` marker retired four, and section
@@ -53,8 +53,8 @@ for (const file of listCorpusFiles()) {
 // re-emits as a backtick fence), nor the over-indent column of a marker line
 // inside an opaque quote, so a document hitting one of those projects to
 // canonical spelling and the envelope carries the authored bytes back.
-assert.strictEqual(envelopes, 486, 'source-envelope population changed; audit the new projection differences');
-assert.strictEqual(authoredAppend, 483, 'an append normalized authored layout in additional documents');
+assert.strictEqual(envelopes, 515, 'source-envelope population changed; audit the new projection differences');
+assert.strictEqual(authoredAppend, 512, 'an append normalized authored layout in additional documents');
 assert.strictEqual(canonicalAppend, 3, 'the set of structurally unterminated append conflicts changed');
 assert.deepStrictEqual(canonicalFiles, [
     '182-openers-past-the-nesting-cap-are-one-paragraph',

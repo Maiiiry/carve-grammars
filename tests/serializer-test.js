@@ -467,6 +467,29 @@ check('a rule marker survives the AST bridge',
 const cell = (t, type = 'tableCell', attrs = {}) => ({ type, attrs, content: [para(text(t))] });
 const row = (...cells) => ({ type: 'tableRow', content: cells });
 
+check('edited continuation joins stay in their cells',
+    doc({ type: 'table', content: [{ type: 'tableRow', attrs: { carveContinuationLines: 1 }, content: [
+        cell('a x'), cell('b y'),
+    ] }] }),
+    '| a x | b y |');
+
+check('span marker continuation keeps the next cell text',
+    doc({ type: 'table', content: [
+        row(cell('a'), cell('b')),
+        { type: 'tableRow', attrs: { carveContinuationLines: 1 }, content: [
+            cell('x', 'tableCell', { carveSpanMarker: '<' }), cell('c y'),
+        ] },
+    ] }),
+    '| a | b |\n| < | c y |\n+ x |  |');
+
+{
+    const source = '| a | b |\n| < | c |\n+ x | y |\n';
+    const edited = carveToProseMirror(source);
+    edited.content[0].content[1].content[1].content[0].content[0].text = 'c edited';
+    check('edited span continuation keeps next cell text', edited,
+        '| a | b |\n| < | c edited |\n+ x |  |');
+}
+
 check('table header row uses |=',
     doc({ type: 'table', content: [
         row(cell('H1', 'tableHeader'), cell('H2', 'tableHeader')),
