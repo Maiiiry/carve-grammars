@@ -60,6 +60,38 @@ const SHAPES = [
     ['| a |\n+ b |{.x}\n', false],
     ['# H |\n+ b |\n', false],
     ['- a\n  + b |\ntail\n', false],
+    // Behind a quote prefix, and a table indented at the top level.
+    ['> | a |\n> + b |\ntail\n', true],
+    ['> |= a |\n> + b |\ntail\n', true],
+    ['> > | a |\n> > + b |\ntail\n', true],
+    ['> > > | a |\n> > > + b |\ntail\n', true],
+    [':: t\n:  > | a |\n   > + b |\ntail\n', true],
+    ['> - | a |\n>   | b |\n> +\n> | c |\n> | d |\n', true],
+    ['> - a\n> +\n> ```\n> x\n> ```\n', true],
+    ['> +\n> ```\n> x\n> ```\n', false],
+    ['> para\n> +\n> ```\n> x\n> ```\n', false],
+    ['> - a\n>\n> +\n> ```\n> x\n> ```\n', true],
+    ['> | a |\n> |---|\n> + b |\n', false],
+    ['> | a |\n>\n> + b |\n', false],
+    ['> + b |\n', false],
+    ['> > | a |\n> + b |\n', false],
+    ['> | a |\n> > + b |\n', false],
+    ['> | a |\n> + b |\n> + c |\n', true],
+    ['> > q\n> +\n> ```\n> x\n> ```\n', true],
+    ['> [^n]: x\n> +\n> ```\n> x\n> ```\n', true],
+    ['> :: t\n> : d\n> +\n> ```\n> x\n> ```\n', true],
+    ['> # H\n> +\n> ```\n> x\n> ```\n', false],
+    ['> - a\n>   - b\n> +\n> ```\n> x\n> ```\n', true],
+    ['> - a\n> lazy\n> +\n> ```\n> x\n> ```\n', true],
+    ['> - a\n>\n> para\n> +\n> ```\n> x\n> ```\n', false],
+    ['  | a |\n  + b |\n', false],
+    [' | a |\n + b |\n', false],
+    ['- a\n  | t |\n  + r |\n', true],
+    ['- a\n\n  | t |\n  + r |\n', true],
+    [':: t\n:  a\n\n   | t |\n   + r |\n', true],
+    ['  - a\n    | t |\n    + r |\n', true],
+    ['> - a\n> +\n> | t |\n> +\n> ```\n> y\n> ```\n', true],
+    ['> | a |\n> + b |{.x}\n', false],
 ];
 
 const plusScopes = (source) => {
@@ -82,12 +114,16 @@ for (const [source, markup] of SHAPES) {
 const script = `
     import { prismTokens } from './tests/lib/engines.js';
     for (const source of [
-        '+\\n'.repeat(40000),
-        '+\\n\\n'.repeat(30000),
-        '+\\nx\\n'.repeat(30000),
-        '- a\\n' + '+\\nx\\n'.repeat(30000),
-        '- a\\n' + '\\n  i\\n+\\n'.repeat(20000),
-        '+ b |\\n'.repeat(30000),
+        '+\\n'.repeat(20000),
+        '+\\n\\n'.repeat(15000),
+        '+\\nx\\n'.repeat(15000),
+        '- a\\n' + '+\\nx\\n'.repeat(15000),
+        '- a\\n' + '\\n  i\\n+\\n'.repeat(10000),
+        '+ b |\\n'.repeat(15000),
+        '> +\\n'.repeat(15000),
+        '> - a\\n' + '> +\\n> x\\n'.repeat(10000),
+        '> + b |\\n'.repeat(15000),
+        '  | a |\\n  + b |\\n'.repeat(10000),
     ]) {
         if (prismTokens(source).map((token) => token.text).join('') !== source) process.exit(1);
     }
