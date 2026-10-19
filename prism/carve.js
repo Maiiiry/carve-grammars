@@ -1077,18 +1077,19 @@
             greedy: true,
             inside: { escape: { pattern: /""/, alias: 'char' } },
         };
-        var punctuation = { pattern: new RegExp(escaped), alias: 'punctuation' };
+        var punctuation = { pattern: new RegExp(escaped), alias: 'operator' };
         return {
             header: {
                 pattern: /(?<![\s\S])[^\r\n]+/,
                 inside: {
                     string: string,
                     separator: punctuation,
-                    field: { pattern: new RegExp('[^' + escaped + '"\\r\\n]+'), alias: 'property' },
+                    field: { pattern: new RegExp('[^' + escaped + '\\r\\n]+'), alias: 'property' },
                 },
             },
             string: string,
             separator: punctuation,
+            field: { pattern: new RegExp('[^' + escaped + '\\r\\n]+'), alias: 'string' },
         };
     }
     var csvBody = delimitedBody(',');

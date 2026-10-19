@@ -44,7 +44,7 @@
     "text": "Item"
   },
   {
-    "type": "code-block>csv-body>header>separator>punctuation",
+    "type": "code-block>csv-body>header>separator>operator",
     "text": ","
   },
   {
@@ -52,7 +52,7 @@
     "text": "Qty"
   },
   {
-    "type": "code-block>csv-body>header>separator>punctuation",
+    "type": "code-block>csv-body>header>separator>operator",
     "text": ","
   },
   {
@@ -61,42 +61,50 @@
   },
   {
     "type": "code-block>csv-body",
-    "text": "\nApple"
+    "text": "\n"
   },
   {
-    "type": "code-block>csv-body>separator>punctuation",
+    "type": "code-block>csv-body>field>string",
+    "text": "Apple"
+  },
+  {
+    "type": "code-block>csv-body>separator>operator",
     "text": ","
   },
   {
-    "type": "code-block>csv-body",
+    "type": "code-block>csv-body>field>string",
     "text": "12"
   },
   {
-    "type": "code-block>csv-body>separator>punctuation",
+    "type": "code-block>csv-body>separator>operator",
     "text": ","
   },
   {
+    "type": "code-block>csv-body>field>string",
+    "text": "0.40"
+  },
+  {
     "type": "code-block>csv-body",
-    "text": "0.40\n"
+    "text": "\n"
   },
   {
     "type": "code-block>csv-body>string",
     "text": "\"Pear, green\""
   },
   {
-    "type": "code-block>csv-body>separator>punctuation",
+    "type": "code-block>csv-body>separator>operator",
     "text": ","
   },
   {
-    "type": "code-block>csv-body",
+    "type": "code-block>csv-body>field>string",
     "text": "3"
   },
   {
-    "type": "code-block>csv-body>separator>punctuation",
+    "type": "code-block>csv-body>separator>operator",
     "text": ","
   },
   {
-    "type": "code-block>csv-body",
+    "type": "code-block>csv-body>field>string",
     "text": "0.55"
   },
   {
