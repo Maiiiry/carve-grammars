@@ -953,6 +953,39 @@
     })();
     var dlDescription = '([ \\t]*)(?=:)' + dlAligned + ':( +)' + dlBlankEnd + '[^\\n]*(?:' + dlLazy
         + '|(?:\\n[ \\t\\r]*(?=\\n))+\\n(?=\\1 \\2[ \\t]*[^\\s])(?!' + otherBlockOpener + ')[^\\n]*)*';
+    // A term indented past column 0 opens a list only at or right of the
+    // content column of a list item or description above it whose lines reach
+    // down to it;
+    // anywhere else the engines fold it into a paragraph. One branch per
+    // column, each checked right after the indentation.
+    var dlTermHosted = (function () {
+        var list = '(?:[-*]|(?:[0-9]+|[A-Za-z]|[ivxlcdm]+|[IVXLCDM]+)[.)]|\\.)(?: \\[[ xX\\-_>?]\\])?';
+        // A description hosts only at column 0 or after list markers on its line.
+        var hostLead = '(?:[ \\t]*' + list + ' +|(?:' + list + ' +)*: +)';
+        // A column-0 lazy line right under a non-blank line keeps the item open.
+        var dlHostLazy = '(?=[^ \\t\\r\\n])(?<=[^ \\t\\r\\n][^\\r\\n]*\\r?\\n)(?!' + otherBlockOpener + ')(?!::? |\\{[^\\n]*\\}[ \\t]*\\r?(?![^\\n]))[^ \\t\\r\\n][^\\n]*';
+        var at = [];
+        for (var n = 1; n <= 12; n++) {
+            at.push('(?=::)(?<=(?<![^\\n])(?=[^\\n]{0,' + n + '}(?=[^ \\t\\r\\n])(?<=(?<![^\\n])' + hostLead + ')[^ \\t\\r\\n])'
+                + '[^\\n]*\\n(?:(?:[ \\t]*\\r?|[ \\t]+[^ \\t\\r\\n][^\\n]*|' + dlHostLazy + ')\\n){0,64} {' + n + '})');
+        }
+        // Past column 12 the column is not compared (a branch per column costs
+        // too much): any host above accepts it.
+        at.push('(?=::)(?<=(?<![^\\n])' + hostLead + '[^\\n]*\\n(?:(?:[ \\t]*\\r?|[ \\t]+[^ \\t\\r\\n][^\\n]*|' + dlHostLazy + ')\\n){0,64} {13,})');
+        // Past 64 lines with nothing that ends a container the host cannot be
+        // read: accept the term.
+        at.push('(?=::)(?<=(?<![^\\n])(?:(?:[ \\t]*\\r?|[ \\t]+[^ \\t\\r\\n][^\\n]*|' + dlHostLazy + ')\\n){64} +)');
+        // A footnote body holds blocks at any indentation.
+        at.push('(?=::)(?<=(?<![^\\n])\\[\\^[^\\]\\r\\n]+\\]:[^\\n]*\\n(?:(?:[ \\t]*\\r?|[ \\t]+[^ \\t\\r\\n][^\\n]*)\\n){0,64} +)');
+        return '(?:' + at.join('|') + ')';
+    })();
+    // A refused term and the lines it folds: a paragraph, matched greedily
+    // ahead of 'definition-list' so that rule never sees it as an entry.
+    var refusedTermPattern = RegExp(
+        '^(?<![^\\r\\n])(?:(?<![\\s\\S])\\uFEFF)? +(?=:: +' + dlBlankEnd + ')(?!' + dlTermHosted + ')[^\\n]*'
+        + '(?:\\n(?![ \\t\\r]*(?:\\n|$))(?!' + otherBlockOpener + ')(?!::)(?! +(?=:: )' + dlTermHosted + ')[^\\n]*)*',
+        'm',
+    );
     var definitionListPattern = RegExp(
         '^(?<![^\\r\\n])(?:(?<![\\s\\S])\\uFEFF)?' + dlTerm
         + '(?:(?:\\n[ \\t\\r]*(?=\\n))*\\n(?:' + dlTerm + '|' + dlDescription + '))*(?:\\n(?![\\s\\S]))?',
@@ -2042,6 +2075,11 @@
         // through lines that are not some OTHER block opener (see
         // `otherBlockOpener` above `Prism.languages.carve`), and past a blank
         // line only into another entry or an indented description line.
+        'refused-term': {
+            pattern: refusedTermPattern,
+            greedy: true,
+            inside: inline,
+        },
         'definition-list': {
             pattern: definitionListPattern,
             inside: {
@@ -2980,6 +3018,8 @@
                 },
                 'punctuation': [
                     { pattern: /(^\uFEFF?[ \t]*(?:> )*> ):(?= )/m, lookbehind: true },
+                    // An indented `:` at the column of a term or description above it.
+                    { pattern: /(?=:)(?<=(?<![^\r\n])\uFEFF?[ \t]*(?:> )*> (?:\1: |\1:: (?<=> :: )|(?:(?:[-*]|(?:[0-9]+|[A-Za-z]|[ivxlcdm]+|[IVXLCDM]+)[.)]|\.)(?: \[[ xX\-_>?]\])? +[^\n]*\n(?:[^\r\n]*\n){0,64}|(?:(?:[-*]|(?:[0-9]+|[A-Za-z]|[ivxlcdm]+|[IVXLCDM]+)[.)]|\.)(?: \[[ xX\-_>?]\])? +)*: +[^\n]*\n(?:[^\r\n]*\n(?<!(?<![^\n])[ \t]*(?:> )*>[ \t]*\n(?<![^\n])[ \t]*(?:> )*>[ \t]*\n)){0,64})(?<![^\r\n])\uFEFF?[ \t]*(?:> )*> (?=  )\1:: )[^\r\n]*\n(?:[^\r\n]*\n){0,64}(?<![^\r\n])\uFEFF?[ \t]*(?:> )*> ( +)):(?= )/m, greedy: true },
                     /^\uFEFF?[ \t]*>(?: >(?= |$))*/m,
                 ],
             }, inline),
