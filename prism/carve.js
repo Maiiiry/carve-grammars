@@ -930,7 +930,28 @@
     var dlMarker = '[ \\t]*::? +' + dlBlankEnd;
     var dlLazy = '\\n(?![ \\t\\r]*(?:\\n|$))(?!' + otherBlockOpener + ')(?!' + dlMarker + ')[^\\n]*';
     var dlTerm = '[ \\t]*:: +' + dlBlankEnd + '[^\\n]*(?:' + dlLazy + ')*';
-    var dlDescription = '([ \\t]*):( +)' + dlBlankEnd + '[^\\n]*(?:' + dlLazy
+    // A description marker sits at the column of a term or description within
+    // 64 lines above it, which may follow list or description markers on its
+    // line (markup-carve/carve#3458); any other `:` line is no marker.
+    var dlAligned = (function () {
+        var unit = '(?:[ \\t]|[-*+] |[0-9A-Za-z]+[.)] |\\[[ xX\\-_>?]\\] |::? )';
+        var lines = '[^\\n]*\\n(?:[^\\n]*\\n){0,64}';
+        var at = ['\\1::? '];
+        for (var n = 0; n <= 12; n++) {
+            at.push(unit + '*(?<=(?<![^\\n])(?:(?<![\\s\\S])\\uFEFF)?[^\\n]{' + n + '})::? ' + lines + ' {' + n + '}(?<![^\\n] {' + n + '})');
+        }
+        // Past 64 lines with no marker line the column cannot be read: accept it.
+        at.push('(?:(?![ \\t]*::? )[^\\n]*\\n){64}[ \\t]*');
+        // A term at the start of the text may be a fragment after a list marker
+        // (`- :: t`), whose column Prism cannot see. A list marker takes two
+        // columns at least, and the first description sets the column for the
+        // rest. A document that opens on a term reads the same text, so there a
+        // description indented two or more columns is accepted too.
+        var first = '(?<![\\s\\S])\\uFEFF?:: [^\\n]*\\n(?:(?![ \\t]*: )[^\\n]*\\n){0,64}';
+        at.push(first + '[ \\t]{2,}', first + '(?=[ \\t]{2})\\1: ' + lines + '\\1');
+        return '(?<=(?<![^\\n])(?:(?<![\\s\\S])\\uFEFF)?(?:' + at[0] + lines + '\\1|' + at.slice(1).join('|') + '))';
+    })();
+    var dlDescription = '([ \\t]*)(?=:)' + dlAligned + ':( +)' + dlBlankEnd + '[^\\n]*(?:' + dlLazy
         + '|(?:\\n[ \\t\\r]*(?=\\n))+\\n(?=\\1 \\2[ \\t]*[^\\s])(?!' + otherBlockOpener + ')[^\\n]*)*';
     var definitionListPattern = RegExp(
         '^(?<![^\\r\\n])(?:(?<![\\s\\S])\\uFEFF)?' + dlTerm
@@ -1089,13 +1110,30 @@
                 + lone + '(?:> ){0,' + (k - 1) + '}(?!>(?: |\\r?$))(?![ \\t])' + notItem + '[^\\r\\n])');
         }
         opened = opened.join('|');
+        // A quote's own first line inside a list item (`- a` / `  > +`), at or
+        // right of the item's content column and under no quote line: the
+        // follower is lazy text at column 0, or a non-list block at the quote's
+        // column with fewer `> ` prefixes (depth 4 at most). One branch per indent
+        // and depth, so no group is captured.
+        var hosted = [];
+        var follow = [];
+        for (var n = 1; n <= 12; n++) {
+            var host = '(?=[^\\n]{0,' + n + '}(?=[^ \\t\\r\\n])(?<=(?<![^\\n])[ \\t]*' + item + '[ \\t]+)[^ \\t\\r\\n])';
+            hosted.push('(?=\\+)(?<=(?<![^\\n])' + host + '[^\\n]*\\n(?:(?:[ \\t]*\\r?|[ \\t]+[^ \\t\\r\\n][^\\n]*)\\n){0,64} {' + n + '}(?:> )+)'
+                + '(?=\\+)(?<=(?<![^\\n])(?![ \\t]*(?:' + item + '[ \\t]+)*>)[^\\n]*\\n {' + n + '}(?:> )+)');
+            for (var k = 1; k <= 4; k++) {
+                follow.push('(?= {' + n + '})(?<=(?<![^\\n]) {' + n + '}(?:> ){' + k + '}\\+[ \\t]*\\r?\\n) {' + n + '}(?:> ){0,' + (k - 1) + '}');
+            }
+        }
+        hosted = '(?=\\+)(?<=(?<![^\\n]) +(?:> )+)(?:' + hosted.join('|') + ')' + lone
+            + '(?:' + lazyText + '|(?:' + follow.join('|') + ')(?![ \\t>])' + notItem + '[^\\r\\n]))';
         // Openers on one line with a quote innermost (`- > +`): the block
         // below starts at column 0 or at that line's column.
         // Every `>` needs its space: `- >+`, `- > >+` and `- >> +` are item text.
         var d = at(g + 4);
         var stacked = '(?=\\+)(?<=' + lineAt + '(?:(?:[-*] +(?:\\[[ xX\\-_>?]\\] +)?|' + item + ' +)+)(?:> )+)'
             + lone + '(?:' + d.q + d.s + ')?(?![ \\t])' + notItem + '[^\\r\\n])';
-        return '(?:' + listed + '|' + held + '|' + opened + '|' + stacked + ')';
+        return '(?:' + listed + '|' + held + '|' + opened + '|' + stacked + '|' + hosted + ')';
     }
 
     var plusListMarker = '(?:[-*]|(?:[0-9]+|[A-Za-z]|[ivxlcdm]+|[IVXLCDM]+)[.)]|\\.)';
@@ -1976,11 +2014,16 @@
         'definition-list': {
             pattern: definitionListPattern,
             inside: {
-                'definition-term': definitionTerm,
                 // The description marker itself; the body text is left for
                 // the inline rules to tokenize as ordinary content, same as
-                // it was when this lived in 'list'.
-                'punctuation': /^(?<![^\r\n])[ \t]*: +(?![ \t]*$(?![^\r\n]))/m,
+                // it was when this lived in 'list'. It runs before the term
+                // rule splits the entry and matches greedily, so its lookbehind
+                // sees the terms.
+                'punctuation': {
+                    pattern: RegExp('^(?<![^\\r\\n])([ \\t]*)(?=:)' + dlAligned + ': +(?![ \\t]*$(?![^\\r\\n]))', 'm'),
+                    greedy: true,
+                },
+                'definition-term': definitionTerm,
                 'description-attributes': bodyAttributes(':'),
                 'continuation-marker': {
                     // On its own line under the relative-column rule, or right after a description marker.
