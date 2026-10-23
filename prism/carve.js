@@ -974,8 +974,12 @@
     // Inside a two-column container (`- x`, `: d`, a footnote body) a tab is
     // measured from the container's column, so `  \t:: t` stands at its column
     // 4 and a description at 4 columns is not its column (PART 9 §24 C5).
-    var dlRelativeTab = '(?<=' + dlContainer('[-*] (?! )') + '  \\t' + dlTermToDescription + '(?: {4}| ?\\t)'
-        + '|' + dlContainer(': (?! )|' + footnoteHost) + ' {2,3}\\t' + dlTermToDescription + '(?: {4}| ?\\t)'
+    // A footnote body may hold a list item at its column, under which a tab
+    // still counts from the body's column.
+    var footnoteContainer = '(?<![^\\n])' + footnoteHost + '[^\\n]*\\n(?:[ \\t]+(?![ \\t]|::? )[^\\n]*\\n|%%[^\\n]*\\n|\\r?\\n){0,64}';
+    var dlRelativeTab = '(?<=' + dlContainer('[-*] (?! )(?!\\[\\^)') + '  \\t' + dlTermToDescription + '(?: {4}| ?\\t)'
+        + '|' + dlContainer(': (?! )') + ' {2,3}\\t' + dlTermToDescription + '(?: {4}| ?\\t)'
+        + '|' + footnoteContainer + ' {2,3}\\t' + dlTermToDescription + '(?: {4}| ?\\t)'
         + '|' + dlContainer(footnoteHost) + '(?: ?\\t\\t| {4}\\t)' + dlTermToDescription + '(?: {8}| ?\\t {4}))';
     var dlDescription = '([ \\t]*)(?=:)' + dlAligned + ':( +)' + dlBlankEnd + '[^\\n]*(?:' + dlLazy
         + '|(?:\\n[ \\t\\r]*(?=\\n))+\\n(?=\\1 \\2[ \\t]*[^\\s])(?!' + otherBlockOpener + ')[^\\n]*)*';
@@ -2138,11 +2142,13 @@
         // column. Greedy, since a comment or a list marker above may have cut
         // the footnote line off from the text 'definition-list' sees.
         'footnote-description': {
-            pattern: RegExp('^(?<![^\\r\\n])  (?=: +[^ \\t\\r\\n])(?<=(?<![^\\n])' + footnoteBody + '(?:[ \\t]{3,}|[ \\t]*\\t[ \\t]*)'
-                + dlTermToDescription + '  )[^\\r\\n]*', 'm'),
+            // After a list marker the body's column is 4.
+            pattern: RegExp('^(?<![^\\r\\n])(?:  (?=: +[^ \\t\\r\\n])(?<=(?<![^\\n])' + footnoteBody + '(?:[ \\t]{3,}|[ \\t]*\\t[ \\t]*)'
+                + dlTermToDescription + '  )|(?: {4}| ?\\t)(?=: +[^ \\t\\r\\n])(?<=(?<![^\\n])[-*] ' + footnoteBody
+                + '(?:[ \\t]{5,}|(?! ?\\t:)[ \\t]*\\t[ \\t]*)' + dlTermToDescription + '(?: {4}| ?\\t)))[^\\r\\n]*', 'm'),
             greedy: true,
             alias: 'definition-list',
-            inside: { 'punctuation': /^ *: +/ },
+            inside: { 'punctuation': /^[ \t]*: +/ },
         },
         'definition-list': {
             pattern: definitionListPattern,
@@ -3136,6 +3142,52 @@
                 ],
             }, inline),
         });
+        // A term indented into a quoted footnote body, and its descriptions at
+        // the term's column or the body's; a tab counts from the body's column.
+        const spaces = (n) => '(?: {4}| {0,3}\\t){' + (n >> 2) + '} {' + (n & 3) + '}';
+        const bodyColumn = (n) => {
+            const c = n - 2;
+            const alts = ['  ' + spaces(c)];
+            if (c === 2) alts.push(' ?\\t');
+            else if (c === 3) alts.push(' ?\\t ');
+            else if (c >= 4) alts.push(' ?\\t(?:  | ?\\t)' + spaces(c - 4));
+            return '(?:' + alts.join('|') + ')';
+        };
+        const quotedFootnote = (termIndent, aligned) => ({
+            pattern: RegExp('^(?<![^\\r\\n])(?:(?<![\\s\\S])\\uFEFF)?([ \\t]*(?:> )*>) ' + termIndent + '(?=::)(?<=(?<![^\\n])\\1 \\[\\^[^\\]\\r\\n]+\\]:[^\\n]*\\n'
+                + '(?:\\1(?:[ \\t]*\\r?| [ \\t]+[^ \\t\\r\\n][^\\n]*| %%[^\\n]*)\\n){0,64}\\1 [ \\t]+)'
+                + ':: +(?![ \\t]*$(?![^\\r\\n]))[^\\r\\n]*'
+                // Only indented, marker and blank lines keep the body open.
+                + '(?:\\r?\\n\\1(?: (?:[ \\t]*::? +|[ \\t]+(?!::? )[^ \\t\\r\\n])[^\\r\\n]*|[ \\t]*(?=\\r?\\n\\1 [ \\t])))*', 'm'),
+            greedy: true,
+            inside: Object.assign({
+                'definition-term': {
+                    pattern: /(?=::)(?<=(?<![^\r\n])\uFEFF?[ \t]*(?:> )*> [ \t]+)::[^\r\n]*/,
+                    greedy: true,
+                    alias: 'title',
+                    inside: Object.assign({ 'punctuation': /^::/ }, inline),
+                },
+                'punctuation': [
+                    {
+                        pattern: RegExp('(?=: )(?<=(?<![\\s\\S])\\uFEFF?[ \\t]*(?:> )*> (?:' + aligned.join('|')
+                            + '|[^]*\\n[ \\t]*(?:> )*>   )):(?= )'),
+                        greedy: true,
+                    },
+                    { pattern: /(?<![^\r\n])\uFEFF?[ \t]*>(?: >)*/, greedy: true },
+                ],
+            }, inline),
+        });
+        // A term indented with spaces only: a description with the same
+        // indentation, or with a tab at the same column.
+        const spaced = ['\\1::[^]*\\n[ \\t]*(?:> )*> ([ \\t]+)'];
+        for (let n = 2; n <= 12; n++) spaced.push(' {' + n + '}::[^]*\\n[ \\t]*(?:> )*> (?=[ \\t]*\\t)' + bodyColumn(n));
+        Prism.languages.carve.blockquote.splice(1, 0, quotedFootnote('  +', spaced));
+        // A tab-indented term: the same spelling at any column, and every
+        // spelling of its column up to column 12.
+        const tabbed = [];
+        for (let n = 2; n <= 12; n++) tabbed.push(bodyColumn(n) + '::[^]*\\n[ \\t]*(?:> )*> ' + bodyColumn(n));
+        tabbed.push('\\1::[^]*\\n[ \\t]*(?:> )*> (?=[ \\t]{3}[ \\t]*\\t|[ \\t]*\\t[ \\t]{3})([ \\t]+)');
+        Prism.languages.carve.blockquote.splice(1, 0, quotedFootnote('(?=[ \\t]*\\t)(?:  | ?\\t)[ \\t]*', tabbed));
     }
 
     // A term's lazy lines and a description's body are inline runs, read with

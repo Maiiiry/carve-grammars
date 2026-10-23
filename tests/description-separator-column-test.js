@@ -84,6 +84,17 @@ const MARKER = [
     'r[^1]\n\n[^1]: x\n\t:: t\n  : e\n',
     'r[^1]\n\n[^1]: x\n%% c\n    :: t\n  : e\n',
     'r[^1]\n\n[^1]: x\n  - y\n    :: t\n  : e\n',
+    // The same in a quoted footnote, and after a list marker at column 4.
+    'r[^1]\n\n> [^1]: x\n>   :: t\n>   : e\n',
+    'r[^1]\n\n> [^1]: x\n>    :: t\n>   : e\n',
+    'r[^1]\n\n> [^1]: x\n>     :: t\n> \t: e\n',
+    'r[^1]\n\n> [^1]: x\n> \t:: t\n>   : e\n',
+    'r[^1]\n\n> [^1]: x\n>   \t:: t\n>       : e\n',
+    'r[^1]\n\n> [^1]: x\n> \t\t:: t\n>   : e\n',
+    'r[^1]\n\n- [^1]: x\n  \t:: t\n    : e\n',
+    'r[^1]\n\n> [^1]: x\n>   :: t\n>   c\n>   : e\n',
+    'r[^1]\n\n> [^1]: x\n>   :: t\n>\n>   : e\n',
+    'r[^1]\n\n> [^1]: x\n>   :: t\n>   : a\n>   : e\n',
 ];
 const TEXT = [
     '- x\n  :: t\n  : d\n: e\n',
@@ -158,6 +169,11 @@ const TEXT = [
     'r[^1]\n\n[^1]: x\n   \t:: t\n\t: e\n',
     ':: a\n: b\n\n   \t:: t\n    : e\n',
     'r[^1]\n\n- [^1]: x\n   :: t\n  : e\n',
+    'r[^1]\n\n[^1]: x\n  - y\n  \t:: t\n    : e\n',
+    'r[^1]\n\n[^1]: x\n  - y\n  \t:: t\n\t: e\n',
+    'r[^1]\n\n> [^1]: x\n> :: t\n>   : e\n',
+    'r[^1]\n\n> [^1]: x\n>   :: t\n> % c\n>   : e\n',
+    'r[^1]\n\n> [^1]: x\n>   :: t\n>   : a\n> c\n>   : e\n',
 ];
 
 const scopeAt = (tokens, at) => {
@@ -190,9 +206,14 @@ const check = (source, marker) => {
 for (const source of MARKER) check(source, true);
 for (const source of TEXT) check(source, false);
 
-// The spec model reads a tab in a footnote body from the body's column, where
-// carve-js 0.1.13 does not (`  \t:: t` stands at column 6).
-for (const [source, marker] of [['r[^1]\n\n[^1]: x\n  \t:: t\n      : e\n', true]]) {
+// The spec model and carve-rs read a tab in a footnote body from the body's
+// column, and take the body's column after a list marker; carve-js 0.1.13 does not.
+for (const [source, marker] of [
+    ['r[^1]\n\n[^1]: x\n  \t:: t\n      : e\n', true],
+    ['r[^1]\n\n> [^1]: x\n> \t:: t\n>     : e\n', true],
+    ['r[^1]\n\n- [^1]: x\n      :: t\n\t: e\n', true],
+    ['r[^1]\n\n- [^1]: x\n\t\t:: t\n    : e\n', true],
+]) {
     for (const [name, { tokenize, marks }] of Object.entries(ENGINES)) {
         const scoped = marks(scopeAt(tokenize(source), source.lastIndexOf(':')));
         if (scoped !== marker) {
@@ -226,6 +247,18 @@ for (const [source, marker] of TEXTMATE) {
     if (scoped !== marker) {
         failures++;
         console.error(`textmate: ${JSON.stringify(source)} - the last : is ${scoped ? '' : 'not '}scoped as a marker`);
+    }
+}
+
+// The footnote container scan reads each body line one way: a run of tab
+// terms under a list item stays linear (an ambiguous split made it exponential).
+for (const [name, { tokenize }] of Object.entries(ENGINES)) {
+    const started = process.hrtime.bigint();
+    tokenize('- x\n' + '  \t:: t\n    : e\n'.repeat(400));
+    const ms = Number(process.hrtime.bigint() - started) / 1e6;
+    if (ms > 5000) {
+        failures++;
+        console.error(`${name}: 400 tab terms under a list item took ${Math.round(ms)} ms`);
     }
 }
 
