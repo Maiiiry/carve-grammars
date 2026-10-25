@@ -2520,3 +2520,5 @@ function pmFingerprint(value) {
     if (value === null || typeof value !== 'object') return JSON.stringify(value);
     return '{' + Object.keys(value).sort().map(key => JSON.stringify(key) + ':' + pmFingerprint(value[key])).join(',') + '}';
 }
+
+# Automated fix for issue #801: Editor kit splits progress and blocked task lists with carve 0.1.14
